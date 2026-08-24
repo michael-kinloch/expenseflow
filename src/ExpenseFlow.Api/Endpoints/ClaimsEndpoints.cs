@@ -62,10 +62,16 @@ public static class ClaimsEndpoints
         }
 
         var now = timeProvider.GetUtcNow();
-        var validation = ClaimValidator.Validate(request.Amount, request.ExpenseDate, DateOnly.FromDateTime(now.UtcDateTime));
+        var validation = ClaimValidator.Validate(
+            request.Amount,
+            request.ExpenseDate,
+            DateOnly.FromDateTime(now.UtcDateTime),
+            request.Currency,
+            request.Category,
+            request.Description);
         if (!validation.IsValid)
         {
-            return Results.ValidationProblem(new Dictionary<string, string[]> { ["amountOrExpenseDate"] = [.. validation.Errors] });
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["claim"] = [.. validation.Errors] });
         }
 
         var claim = new ExpenseClaim
@@ -109,7 +115,8 @@ public static class ClaimsEndpoints
         return Results.Ok(claims.Select(ToResponse));
     }
 
-    private static async Task<IResult> GetPendingClaims(ClaimsPrincipal principal, ExpenseFlowDbContext db)
+    private static async Task<IResult> GetPendingClaims(
+        ClaimsPrincipal principal, ExpenseFlowDbContext db, IAuthorizationService authorizationService)
     {
         var managerId = GetUserId(principal);
         if (managerId is null)
@@ -117,16 +124,27 @@ public static class ClaimsEndpoints
             return Results.Unauthorized();
         }
 
-        var claims = await db.ExpenseClaims
+        var pendingClaims = await db.ExpenseClaims
             .Include(c => c.Employee)
-            .Where(c => c.Status == ClaimStatus.Pending && c.Employee!.ManagerId == managerId)
+            .Where(c => c.Status == ClaimStatus.Pending)
             .OrderBy(c => c.SubmittedAt)
             .ToListAsync();
 
-        return Results.Ok(claims.Select(ToResponse));
+        var authorized = new List<ExpenseClaim>();
+        foreach (var claim in pendingClaims)
+        {
+            var authorizationResult = await authorizationService.AuthorizeAsync(principal, claim, "ManagerOfClaim");
+            if (authorizationResult.Succeeded)
+            {
+                authorized.Add(claim);
+            }
+        }
+
+        return Results.Ok(authorized.Select(ToResponse));
     }
 
-    private static async Task<IResult> GetClaimById(Guid id, ClaimsPrincipal principal, ExpenseFlowDbContext db)
+    private static async Task<IResult> GetClaimById(
+        Guid id, ClaimsPrincipal principal, ExpenseFlowDbContext db, IAuthorizationService authorizationService)
     {
         var callerId = GetUserId(principal);
         if (callerId is null)
@@ -144,11 +162,13 @@ public static class ClaimsEndpoints
             return Results.NotFound();
         }
 
-        var isOwner = claim.EmployeeId == callerId;
-        var isManager = claim.Employee?.ManagerId == callerId;
-        if (!isOwner && !isManager)
+        if (claim.EmployeeId != callerId)
         {
-            return Results.Forbid();
+            var authorizationResult = await authorizationService.AuthorizeAsync(principal, claim, "ManagerOfClaim");
+            if (!authorizationResult.Succeeded)
+            {
+                return Results.Forbid();
+            }
         }
 
         return Results.Ok(ToResponse(claim));
@@ -214,7 +234,18 @@ public static class ClaimsEndpoints
         db.ClaimDecisions.Add(decision);
         claim.Decision = decision;
 
-        await db.SaveChangesAsync();
+        try
+        {
+            await db.SaveChangesAsync();
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            // The pre-check above is check-then-act and not race-safe: a concurrent request can pass it
+            // before either commits. ExpenseClaim.Status is a concurrency token (see ExpenseFlowDbContext)
+            // and ClaimDecision.ClaimId has a unique index, so the loser of a genuine race fails here
+            // instead of double-deciding the claim.
+            return Results.Conflict(new { message = "This claim has already been decided." });
+        }
 
         logger.LogInformation(
             "Actor {ActorId} performed {Action} on claim {ClaimId} at {Timestamp}",

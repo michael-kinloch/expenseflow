@@ -32,6 +32,7 @@ public class ExpenseFlowDbContext(DbContextOptions<ExpenseFlowDbContext> options
             entity.Property(c => c.Currency).HasMaxLength(3).IsRequired();
             entity.Property(c => c.Category).HasMaxLength(100).IsRequired();
             entity.Property(c => c.Description).HasMaxLength(1000).IsRequired();
+            entity.Property(c => c.Status).IsConcurrencyToken();
 
             entity.HasOne(c => c.Employee)
                 .WithMany()

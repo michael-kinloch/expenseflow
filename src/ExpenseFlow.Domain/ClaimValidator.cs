@@ -7,7 +7,13 @@ public record ClaimValidationResult(bool IsValid, IReadOnlyList<string> Errors)
 
 public static class ClaimValidator
 {
-    public static ClaimValidationResult Validate(decimal amount, DateOnly expenseDate, DateOnly today)
+    public static ClaimValidationResult Validate(
+        decimal amount,
+        DateOnly expenseDate,
+        DateOnly today,
+        string? currency,
+        string? category,
+        string? description)
     {
         var errors = new List<string>();
 
@@ -19,6 +25,21 @@ public static class ClaimValidator
         if (expenseDate > today)
         {
             errors.Add("Expense date cannot be in the future.");
+        }
+
+        if (string.IsNullOrWhiteSpace(currency))
+        {
+            errors.Add("Currency is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(category))
+        {
+            errors.Add("Category is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(description))
+        {
+            errors.Add("Description is required.");
         }
 
         return errors.Count == 0 ? ClaimValidationResult.Success : new ClaimValidationResult(false, errors);

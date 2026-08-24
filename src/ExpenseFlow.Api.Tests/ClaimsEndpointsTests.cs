@@ -75,6 +75,48 @@ public class ClaimsEndpointsTests : IClassFixture<ClaimsEndpointsTestFactory>
     }
 
     [Fact]
+    public async Task PostClaims_WithMissingCurrency_ReturnsValidationError()
+    {
+        var (client, _) = await CreateLoggedInUserAsync("employee", "Employee Four", UserRole.Employee);
+
+        var request = new CreateClaimRequest(10m, null!, "Travel", _factory.TimeProvider.Now.Date.ToDateOnly(), "Taxi", null);
+        var response = await client.PostAsJsonAsync("/api/claims", request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        var mine = await client.GetFromJsonAsync<List<ClaimResponse>>("/api/claims/mine");
+        Assert.Empty(mine!);
+    }
+
+    [Fact]
+    public async Task PostClaims_WithMissingCategory_ReturnsValidationError()
+    {
+        var (client, _) = await CreateLoggedInUserAsync("employee", "Employee Five", UserRole.Employee);
+
+        var request = new CreateClaimRequest(10m, "GBP", null!, _factory.TimeProvider.Now.Date.ToDateOnly(), "Taxi", null);
+        var response = await client.PostAsJsonAsync("/api/claims", request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        var mine = await client.GetFromJsonAsync<List<ClaimResponse>>("/api/claims/mine");
+        Assert.Empty(mine!);
+    }
+
+    [Fact]
+    public async Task PostClaims_WithMissingDescription_ReturnsValidationError()
+    {
+        var (client, _) = await CreateLoggedInUserAsync("employee", "Employee Six", UserRole.Employee);
+
+        var request = new CreateClaimRequest(10m, "GBP", "Travel", _factory.TimeProvider.Now.Date.ToDateOnly(), null!, null);
+        var response = await client.PostAsJsonAsync("/api/claims", request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        var mine = await client.GetFromJsonAsync<List<ClaimResponse>>("/api/claims/mine");
+        Assert.Empty(mine!);
+    }
+
+    [Fact]
     public async Task GetPendingClaims_ReturnsOnlyDirectReportsClaims()
     {
         var manager = await _factory.SeedUserAsync($"manager-{Guid.NewGuid():N}@example.com", "Manager A", UserRole.Manager);
@@ -192,6 +234,40 @@ public class ClaimsEndpointsTests : IClassFixture<ClaimsEndpointsTestFactory>
         var stored = await _factory.GetClaimAsync(created.Id);
         Assert.Equal(ClaimStatus.Approved, stored!.Status);
         Assert.Equal("First decision", stored.Decision!.Comment);
+    }
+
+    [Fact]
+    public async Task PostDecision_ConcurrentRequests_ExactlyOneSucceedsAndOtherReturns409()
+    {
+        var manager = await _factory.SeedUserAsync($"manager-{Guid.NewGuid():N}@example.com", "Manager F", UserRole.Manager);
+        var (reportClient, _) = await CreateLoggedInUserAsync("report", "Report F", UserRole.Employee, manager.Id);
+
+        var claimDate = _factory.TimeProvider.Now.Date.ToDateOnly();
+        var createResponse = await reportClient.PostAsJsonAsync("/api/claims", new CreateClaimRequest(40m, "GBP", "Meals", claimDate, "Dinner", null));
+        var created = await createResponse.Content.ReadFromJsonAsync<ClaimResponse>();
+
+        var managerClientA = _factory.CreateClient();
+        var loginA = await managerClientA.PostAsJsonAsync("/api/auth/login", new LoginRequest(manager.Email, manager.Password));
+        loginA.EnsureSuccessStatusCode();
+
+        var managerClientB = _factory.CreateClient();
+        var loginB = await managerClientB.PostAsJsonAsync("/api/auth/login", new LoginRequest(manager.Email, manager.Password));
+        loginB.EnsureSuccessStatusCode();
+
+        var decisionATask = managerClientA.PostAsJsonAsync(
+            $"/api/claims/{created!.Id}/decision", new DecisionRequest("Approved", "From A"));
+        var decisionBTask = managerClientB.PostAsJsonAsync(
+            $"/api/claims/{created.Id}/decision", new DecisionRequest("Rejected", "From B"));
+
+        var responses = await Task.WhenAll(decisionATask, decisionBTask);
+
+        Assert.Single(responses, r => r.StatusCode == HttpStatusCode.OK);
+        Assert.Single(responses, r => r.StatusCode == HttpStatusCode.Conflict);
+        Assert.DoesNotContain(responses, r => (int)r.StatusCode >= 500);
+
+        var stored = await _factory.GetClaimAsync(created.Id);
+        Assert.NotNull(stored!.Decision);
+        Assert.NotEqual(ClaimStatus.Pending, stored.Status);
     }
 
     [Fact]

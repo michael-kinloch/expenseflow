@@ -17,7 +17,7 @@ public static class AuthEndpoints
         group.MapPost("/login", async (LoginRequest request, SignInManager<User> signInManager) =>
         {
             var result = await signInManager.PasswordSignInAsync(
-                request.Email, request.Password, isPersistent: true, lockoutOnFailure: false);
+                request.Email, request.Password, isPersistent: true, lockoutOnFailure: true);
 
             return result.Succeeded ? Results.Ok() : Results.Unauthorized();
         });
