@@ -2,7 +2,7 @@
 
 **Feature ID:** `expenseflow-mvp`
 **Source spec:** `./spec.md` (same folder) · **Engineer:** Michael Kinloch · **Date:** 2026-08-24 · **Status:** accepted
-**GitHub issue/PR:** https://github.com/michael-kinloch/expenseflow/issues/3
+**GitHub issue/PR:** https://github.com/michael-kinloch/expenseflow/issues/5
 
 ## Context
 This repo currently has no application code — this plan bootstraps the solution from scratch. Stack decisions (confirmed with the user, not guessed): ASP.NET Core Web API + EF Core + SQL Server on the backend, ASP.NET Core Identity with cookie auth for session-based login, and a React + TypeScript SPA frontend, all in a single solution under `src/`.
