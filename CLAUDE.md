@@ -28,12 +28,26 @@ centrally via the ai-native-sdlc plugin's policies/CLAUDE-baseline.md, applied w
 
 ## Project status
 
-`expenseflow` is pre-scaffold: the repository currently contains no application source code, no README, and no build/test tooling — only a `.gitignore` (Visual Studio / .NET template) and `.claude/settings.json` (enables the `ai-native-sdlc` plugin).
+`expenseflow` implements the MVP from `docs/changes/expenseflow-mvp/` (intent → spec → plan, all accepted): expense claim submission and single-manager approval.
 
-The `.gitignore` content suggests the project is expected to be a .NET/Visual Studio codebase, but no `.sln`, `.csproj`, or other project files exist yet to confirm structure, commands, or architecture.
+**Stack:** ASP.NET Core Web API + EF Core + SQL Server backend, ASP.NET Core Identity with cookie-based auth, and a React + TypeScript SPA (Vite) frontend.
 
-## Next steps for future Claude instances
+**Solution layout** (`ExpenseFlow.sln`, all under `src/`):
+- `ExpenseFlow.Api` — Web API host: `Program.cs` (DI, Identity/cookie auth, EF Core, endpoint mapping), `Endpoints/` (`ClaimsEndpoints`, `AuthEndpoints`), `Authorization/ManagerOfClaimHandler` (resource-based policy enforcing "caller is the claim owner's manager" server-side).
+- `ExpenseFlow.Data` — EF Core: `ExpenseFlowDbContext` (extends `IdentityDbContext<User, ...>`), `Entities/` (`User`, `ExpenseClaim`, `ClaimDecision`), `Migrations/`, and `ExpenseFlowDbContextFactory` (design-time factory used by `dotnet ef`).
+- `ExpenseFlow.Domain` — framework-independent business logic: `ClaimValidator` (positive-amount, non-future-date rules).
+- `ExpenseFlow.Api.Tests` — xUnit; `ClaimValidatorTests` (unit) and `ClaimsEndpointsTests` (integration, via `WebApplicationFactory<Program>` with EF Core InMemory swapped in for `ExpenseFlowDbContext` — see `ClaimsEndpointsTestFactory`).
+- `expenseflow-web` — React + TypeScript SPA (Vite): `src/pages/` (`Login`, `NewClaim`, `MyClaims`, `Approvals`), `src/api/client.ts` (typed fetch wrapper, cookie-based), `src/auth/AuthContext.tsx`. Vite dev server proxies `/api` to the backend (see `vite.config.ts`) so cookies stay same-origin in dev.
 
-Once real source files, a solution/project structure, and build tooling are added, re-run `/init` (or manually update this file) to document:
-- Build, lint, and test commands
-- High-level architecture and module boundaries
+**Build/test commands** (from repo root):
+- `dotnet build` — builds the whole solution.
+- `dotnet test` — runs all unit + integration tests.
+- `dotnet tool restore` — restores `dotnet-ef` (manifest at `.config/dotnet-tools.json`) before running `dotnet ef` commands.
+- `dotnet ef migrations add <Name> --project src/ExpenseFlow.Data --startup-project src/ExpenseFlow.Data --output-dir Migrations` — add a migration (uses `ExpenseFlowDbContextFactory`, not `ExpenseFlow.Api`, as the design-time context source).
+- `dotnet run --project src/ExpenseFlow.Api` — runs the API (needs a real SQL Server reachable via the `ExpenseFlow` connection string in `appsettings.json`/`appsettings.Development.json`; no seed/migration-apply step is wired up yet — run `dotnet ef database update` against a real server first).
+- `npm install && npm run dev` (from `src/expenseflow-web/`) — runs the frontend against the API at `http://localhost:5099` (proxied).
+
+## Known gaps / out of scope for this pass
+- No receipt-upload endpoint (accepted as a data column only — see `docs/changes/expenseflow-mvp/plan.md`'s Risks).
+- No password-reset or self-service signup; accounts and `manager_id` are assumed to be seeded directly (no seed script exists yet).
+- No SQL Server instance is provisioned in CI/dev sandboxes by default — integration tests use EF Core InMemory instead (see `docs/changes/expenseflow-mvp/plan.md`'s "Departures from spec").
