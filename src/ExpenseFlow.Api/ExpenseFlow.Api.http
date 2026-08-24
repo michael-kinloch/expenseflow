@@ -1,0 +1,6 @@
+@ExpenseFlow.Api_HostAddress = http://localhost:5099
+
+GET {{ExpenseFlow.Api_HostAddress}}/api/claims/mine
+Accept: application/json
+
+###
